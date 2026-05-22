@@ -42,6 +42,32 @@ fn formatDuration(seconds: f64, buf: []u8) ![]const u8 {
     return std.fmt.bufPrint(buf, "{d:.3}ms", .{seconds * 1000.0});
 }
 
+fn formatCommas(buf: []u8, value: u64) ![]const u8 {
+    var digits: [20]u8 = undefined;
+    const digit_text = try std.fmt.bufPrint(&digits, "{d}", .{value});
+    const separator_count = if (digit_text.len == 0) 0 else (digit_text.len - 1) / 3;
+    const formatted_len = digit_text.len + separator_count;
+    if (formatted_len > buf.len) return error.NoSpaceLeft;
+
+    var src = digit_text.len;
+    var dest = formatted_len;
+    var group_digits: u8 = 0;
+    while (src > 0) {
+        if (group_digits == 3) {
+            dest -= 1;
+            buf[dest] = ',';
+            group_digits = 0;
+        }
+
+        src -= 1;
+        dest -= 1;
+        buf[dest] = digit_text[src];
+        group_digits += 1;
+    }
+
+    return buf[0..formatted_len];
+}
+
 fn rowCount(db: *sqlite.sqlite3) !u64 {
     var stmt: ?*sqlite.sqlite3_stmt = null;
     const prepare_rc = sqlite.sqlite3_prepare_v2(
@@ -125,16 +151,20 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const elapsed_s = @as(f64, @floatFromInt(elapsed.raw.nanoseconds)) / @as(f64, std.time.ns_per_s);
-    const inserts_per_second = @as(f64, @floatFromInt(insert_count)) / elapsed_s;
+    const inserts_per_second: u64 = @intFromFloat(@round(@as(f64, @floatFromInt(insert_count)) / elapsed_s));
 
     var duration_buf: [32]u8 = undefined;
     const duration = try formatDuration(elapsed_s, &duration_buf);
+    var insert_count_buf: [32]u8 = undefined;
+    const insert_count_text = try formatCommas(&insert_count_buf, insert_count);
+    var throughput_buf: [32]u8 = undefined;
+    const throughput_text = try formatCommas(&throughput_buf, inserts_per_second);
     var stdout_buffer: [256]u8 = undefined;
     var stdout_file_writer = Io.File.stdout().writer(init.io, &stdout_buffer);
     const stdout = &stdout_file_writer.interface;
     try stdout.print(
-        "sqlite in-memory insert benchmark: {d} inserts in {s} ({d:.0} inserts/sec)\n",
-        .{ insert_count, duration, inserts_per_second },
+        "sqlite in-memory insert benchmark: {s} inserts in {s} ({s} inserts/sec)\n",
+        .{ insert_count_text, duration, throughput_text },
     );
     try stdout.flush();
 }
